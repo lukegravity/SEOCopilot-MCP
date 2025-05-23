@@ -10,8 +10,8 @@ def suggest_better_titles(query: str, user_title: str, competitor_titles: List[s
 
     top_titles = competitor_titles[:10]
 
-    prompt = f"""
-You are an expert SEO assistant.
+    # Use triple quotes and avoid f-string formatting issues
+    prompt = """You are an expert SEO assistant in the iGaming niche.
 
 Your task is to generate a set of compelling and optimized meta titles and meta descriptions for the query: "{query}".
 
@@ -19,16 +19,17 @@ The page currently uses this title:
 "{user_title}"
 
 Here are the top titles currently ranking in Google for this query:
-{chr(10).join(f"- {t}" for t in top_titles)}
+{competitor_titles}
 
 Use the SERP data above to guide your suggestions — match the tone, length, and structure where needed, but aim to **outperform these** by being more relevant, clickable, and unique.
 
 Follow these principles:
 - Prioritize **CTR (click-through rate)** above all — drive user intent
-- Titles must be between **50–60 characters**
+- Titles should be between **50–60 characters**
 - Descriptions must be between **120–160 characters**
 - If the SERP includes **emojis**, include tasteful, relevant emoji suggestions too
-- Consider **average SERP title length** and adjust suggestions to match Google's presentation
+- Emojis should always be at the **start** or the **end** of the title
+- Consider **average SERP title length** and adjust suggestions to match Google's presentation - this can override the 50 character minimum as required
 - Look for angles that the current titles may be missing: CTAs, emotional appeal, specificity, or uniqueness
 
 Return exactly 5 suggestions, each with:
@@ -38,24 +39,27 @@ Return exactly 5 suggestions, each with:
 
 Format your response as a structured JSON with the following format:
 ```json
-{
+{{
   "suggestions": [
-    {
+    {{
       "title": "Suggested title 1",
       "description": "Suggested description 1",
       "rationale": "Rationale for suggestion 1"
-    },
-    {
+    }},
+    {{
       "title": "Suggested title 2",
       "description": "Suggested description 2",
       "rationale": "Rationale for suggestion 2"
-    }
+    }}
   ]
-}
+}}
 ```
 
-Only return the JSON, no other text.
-"""
+Only return the JSON, no other text.""".format(
+        query=query,
+        user_title=user_title,
+        competitor_titles='\n'.join(f"- {t}" for t in top_titles)
+    )
 
     headers = {
         "x-api-key": api_key,
