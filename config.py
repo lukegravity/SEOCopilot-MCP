@@ -13,6 +13,5 @@ DEFAULT_LOCATION_CODE = int(os.getenv("DEFAULT_LOCATION_CODE", 2840))  # US
 DEFAULT_LANGUAGE_CODE = os.getenv("DEFAULT_LANGUAGE_CODE", "en")
 DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "desktop")
 
-# OpenAI settings
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
-TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.7))
+# Anthropic API key (optional - for AI suggestions)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
