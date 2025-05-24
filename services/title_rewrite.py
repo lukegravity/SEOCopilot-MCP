@@ -11,7 +11,7 @@ def suggest_better_titles(query: str, user_title: str, competitor_titles: List[s
     top_titles = competitor_titles[:10]
 
     # Use triple quotes and avoid f-string formatting issues
-    prompt = """You are an expert SEO assistant in the iGaming niche.
+    prompt = """You are an expert SEO assistant.
 
 Your task is to generate a set of compelling and optimized meta titles and meta descriptions for the query: "{query}".
 
@@ -25,7 +25,7 @@ Use the SERP data above to guide your suggestions — match the tone, length, an
 
 Follow these principles:
 - Prioritize **CTR (click-through rate)** above all — drive user intent
-- Titles should be between **50–60 characters**
+- Titles should be between **50–65 characters**, unless the SERP data suggests that titles are generally shorter than this; be sure to include the rationale in your response.
 - Descriptions must be between **120–160 characters**
 - If the SERP includes **emojis**, include tasteful, relevant emoji suggestions too
 - Emojis should always be at the **start** or the **end** of the title
@@ -68,7 +68,7 @@ Only return the JSON, no other text.""".format(
     }
 
     data = {
-        "model": "claude-3-opus-20240229",
+        "model": "claude-3-haiku-20240307",  # Cheaper model - was claude-3-opus-20240229
         "max_tokens": 2000,
         "temperature": 0.7,
         "messages": [

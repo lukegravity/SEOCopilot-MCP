@@ -54,6 +54,10 @@ async def handle_list_tools() -> List[Tool]:
                         "type": "string", 
                         "description": "The current title of the user's page"
                     },
+                    "user_domain": {
+                        "type": "string",
+                        "description": "Your domain (e.g., 'example.com') to exclude from competitor analysis and identify your ranking"
+                    },
                     "location_code": {
                         "type": "integer",
                         "description": "Location code for SERP data (default: 2840 for US)"
@@ -66,9 +70,9 @@ async def handle_list_tools() -> List[Tool]:
                         "type": "string",
                         "description": "Device type for SERP data (default: desktop)"
                     },
-                    "use_test_data": {
-                        "type": "boolean",
-                        "description": "Use local test data instead of live API call"
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results to analyze in detail (default: 10, max: 100)"
                     }
                 },
                 "required": ["query", "user_title"]
@@ -171,7 +175,13 @@ async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
         else:
             response_text += "No suggestions were generated. Please check your API configuration.\n"
 
+        # Add enhanced analysis data
+        enhanced_analysis = generate_enhanced_analysis(organic_results, competitor_titles, query, serp)
+        
         # Include raw data for further analysis
+        response_text += "\n## Enhanced SERP Analysis\n"
+        response_text += enhanced_analysis
+        
         response_text += "\n## Additional SERP Data for Analysis\n"
         response_text += f"**Total SERP results:** {serp.get('se_results_count', 'N/A')}\n"
         response_text += f"**Search performed:** {serp.get('datetime', 'N/A')}\n"
@@ -204,41 +214,63 @@ async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
         
         return [types.TextContent(type="text", text=response_text)]
         
+    except ValueError as e:
+        # Handle validation errors (missing parameters, invalid values)
+        logger.error(f"Validation error: {str(e)}")
+        error_text = f"❌ **Invalid Request**\n\n{str(e)}\n\n"
+        error_text += "**Required Parameters:**\n"
+        error_text += "- `query`: Target keyword to analyze\n"
+        error_text += "- `user_title`: Your current page title\n\n"
+        error_text += "**Optional Parameters:**\n"
+        error_text += "- `user_domain`: Your domain (e.g., 'example.com')\n"
+        error_text += "- `max_results`: Number of results to analyze (10-100)\n"
+        error_text += "- `location_code`: Geographic location code\n"
+        error_text += "- `language_code`: Language code (e.g., 'en')\n"
+        error_text += "- `device`: Device type ('desktop', 'mobile', 'tablet')"
+        return [types.TextContent(type="text", text=error_text)]
+        
+    except RuntimeError as e:
+        # Handle API and data processing errors
+        logger.error(f"Runtime error: {str(e)}")
+        error_text = f"❌ **Service Error**\n\n{str(e)}\n\n"
+        error_text += "**Common Solutions:**\n"
+        error_text += "- Check your DataForSEO API credentials in the .env file\n"
+        error_text += "- Verify your internet connection\n"
+        error_text += "- Ensure your API account has sufficient credits\n"
+        error_text += "- Try again in a few moments\n\n"
+        error_text += "If the problem persists, please check the server logs for more details."
+        return [types.TextContent(type="text", text=error_text)]
+        
     except Exception as e:
+        # Handle unexpected errors
         import traceback
-        logger.error(f"Error in analyze_title_tool: {str(e)}")
+        logger.error(f"Unexpected error in analyze_title_tool: {str(e)}")
         logger.error(f"Full traceback: {traceback.format_exc()}")
         
-        # More detailed error for debugging
-        error_text = f"Error analyzing title: {str(e)}\n\n"
-        error_text += f"Query: {arguments.get('query', 'N/A')}\n"
-        error_text += f"Full error details: {traceback.format_exc()}"
+        error_text = f"❌ **Unexpected Error**\n\n"
+        error_text += f"An unexpected error occurred: {str(e)}\n\n"
+        error_text += "**What you can try:**\n"
+        error_text += "- Verify all parameters are correct\n"
+        error_text += "- Check your API configuration\n"
+        error_text += "- Try with a different keyword\n"
+        error_text += "- Contact support if the issue persists\n\n"
+        error_text += f"**For support, please include:**\n"
+        error_text += f"- Query: {arguments.get('query', 'N/A')}\n"
+        error_text += f"- Error: {str(e)}"
         
         return [types.TextContent(type="text", text=error_text)]
 
 @server.list_resources()
 async def handle_list_resources() -> List[Resource]:
     """List available resources"""
-    return [
-        Resource(
-            uri=AnyUrl("file://data/payload.json"),
-            name="Sample SERP Data",
-            description="Sample SERP data for sweepstakes casinos keyword",
-            mimeType="application/json"
-        )
-    ]
+    # No resources needed for production version
+    return []
 
 @server.read_resource()
 async def handle_read_resource(uri: AnyUrl) -> str:
     """Read resource content"""
-    if str(uri) == "file://data/payload.json":
-        try:
-            with open("data/payload.json", "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception as e:
-            raise RuntimeError(f"Error reading sample data: {str(e)}")
-    else:
-        raise ValueError(f"Unknown resource: {uri}")
+    # No resources available in production version
+    raise ValueError(f"No resources are available in this MCP server")
 
 async def main():
     """Run the MCP server"""
