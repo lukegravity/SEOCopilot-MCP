@@ -8,14 +8,6 @@
       "description": "An MCP server that provides SEO analysis and title suggestions based on SERP data.",
       "auth": {
         "type": "none"
-      },
-      "user_settings": {
-        "api_credentials": {
-          "dataforseo": {
-            "login": "lukasarts@gmail.com",
-            "password": "186900e2c4219ddc"
-          }
-        }
       }
     }
   ]
