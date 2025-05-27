@@ -7,6 +7,12 @@ import asyncio
 from datetime import datetime
 import logging
 from typing import Any, List, Dict, Optional
+import os
+
+# Load environment variables FIRST
+from dotenv import load_dotenv
+load_dotenv()
+
 from mcp.server.models import InitializationOptions
 from mcp.server import NotificationOptions, Server
 from mcp.types import (
@@ -20,15 +26,18 @@ import mcp.types as types
 from services.dataforseo import fetch_live_serp
 from services.parser import extract_serp_titles
 from services.title_rewrite import suggest_better_titles
-from config import (
-    DEFAULT_LOCATION_CODE,
-    DEFAULT_LANGUAGE_CODE,
-    DEFAULT_DEVICE,
-)
+
+# Load config values from environment with fallbacks
+DEFAULT_LOCATION_CODE = int(os.getenv("DEFAULT_LOCATION_CODE", "2840"))  # US
+DEFAULT_LANGUAGE_CODE = os.getenv("DEFAULT_LANGUAGE_CODE", "en")
+DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "desktop")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("seo-copilot-mcp")
+
+# Log the loaded configuration
+logger.info(f"Configuration loaded - Location: {DEFAULT_LOCATION_CODE}, Language: {DEFAULT_LANGUAGE_CODE}, Device: {DEFAULT_DEVICE}")
 
 # Create the MCP server
 server = Server("seo-copilot")
@@ -57,15 +66,15 @@ async def handle_list_tools() -> List[Tool]:
                     },
                     "location_code": {
                         "type": "integer",
-                        "description": "Location code for SERP data (default: 2840 for US)"
+                        "description": f"Location code for SERP data (default: {DEFAULT_LOCATION_CODE})"
                     },
                     "language_code": {
                         "type": "string",
-                        "description": "Language code for SERP data (default: en)"
+                        "description": f"Language code for SERP data (default: {DEFAULT_LANGUAGE_CODE})"
                     },
                     "device": {
                         "type": "string",
-                        "description": "Device type for SERP data (default: desktop)"
+                        "description": f"Device type for SERP data (default: {DEFAULT_DEVICE})"
                     },
                     "max_results": {
                         "type": "integer",
@@ -88,7 +97,7 @@ async def handle_call_tool(name: str, arguments: dict) -> List[types.TextContent
 async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
     """Analyze title and provide SEO suggestions"""
     try:
-        # Extract arguments
+        # Extract arguments with proper defaults
         query = arguments.get("query")
         user_title = arguments.get("user_title")
         user_domain = arguments.get("user_domain", "").lower().strip()
@@ -96,57 +105,57 @@ async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
         language_code = arguments.get("language_code", DEFAULT_LANGUAGE_CODE)
         device = arguments.get("device", DEFAULT_DEVICE)
         max_results = min(arguments.get("max_results", 10), 100)
-        
-        # Validate required parameters
+
         if not query or not query.strip():
             raise ValueError("Query parameter is required and cannot be empty")
         if not user_title or not user_title.strip():
             raise ValueError("User title parameter is required and cannot be empty")
-        
+
         logger.info(f"Analyzing title for query: {query}")
-        
-        # Fetch live SERP data
-        serp = fetch_live_serp(
-            keyword=query,
-            location_code=location_code,
-            language_code=language_code,
-            device=device
-        )
-        logger.info("Using live SERP data from DataForSEO API")
+        logger.info(f"Using location: {location_code}, language: {language_code}, device: {device}")
 
-        # Extract competitor titles and full SERP data
-        titles = extract_serp_titles(serp)
-        logger.info(f"Extracted {len(titles)} competitor titles")
+        try:
+            serp = fetch_live_serp(
+                keyword=query,
+                location_code=location_code,
+                language_code=language_code,
+                device=device
+            )
+            logger.info("Using live SERP data from DataForSEO API")
+        except Exception as e:
+            logger.error(f"Failed to fetch SERP: {e}")
+            return [types.TextContent(type="text", text=f"❌ Error fetching SERP data:\n\n{str(e)}")]
 
-        # Extract detailed organic results and PAA for analysis
         from services.parser import extract_organic_results, extract_paa_questions
         organic_results = extract_organic_results(serp)
         paa_questions = extract_paa_questions(serp)
 
-        # Filter out user's own domain and identify user's ranking
-        user_ranking = None
         user_result = None
+        user_ranking = None
+        user_duplicates = []
         competitor_results = []
-        
+
+        clean_user_domain = user_domain.replace('www.', '') if user_domain else ''
         for result in organic_results:
-            result_domain = result.get('url', '').split('/')[2].lower() if result.get('url') else ''
-            result_domain = result_domain.replace('www.', '')
-            clean_user_domain = user_domain.replace('www.', '') if user_domain else ''
-            
-            if clean_user_domain and clean_user_domain in result_domain:
-                user_ranking = result.get('position', result.get('rank_absolute', 0))
-                user_result = result
-                logger.info(f"Found user's domain at position {user_ranking}")
+            url = result.get('url', '')
+            result_domain = url.split('/')[2].lower().replace('www.', '') if url else ''
+            rank = result.get('position', result.get('rank_absolute', 0))
+
+            if clean_user_domain and result_domain == clean_user_domain:
+                if user_result is None or rank < user_ranking:
+                    user_result = result
+                    user_ranking = rank
+                    logger.info(f"Found user's domain at position {user_ranking}")
+                else:
+                    user_duplicates.append(result)
             else:
                 competitor_results.append(result)
 
-        # Extract competitor titles (excluding user's domain)
-        competitor_titles = [result.get('title', '') for result in competitor_results if result.get('title')]
+        competitor_titles = [r.get("title", "") for r in competitor_results if r.get("title")]
 
-        # Check if we should generate AI suggestions or provide guidelines
-        from config import ANTHROPIC_API_KEY
-        use_ai_suggestions = ANTHROPIC_API_KEY is not None and ANTHROPIC_API_KEY.strip() != ""
-        
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        use_ai_suggestions = api_key is not None and api_key.strip() != ""
+
         suggestions_data = None
         if use_ai_suggestions:
             logger.info("Using Anthropic API for AI-generated suggestions")
@@ -156,54 +165,48 @@ async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
                     user_title=user_title,
                     competitor_titles=competitor_titles
                 )
+                logger.info(f"AI suggestions generated: {len(suggestions_data.get('suggestions', []))}")
             except Exception as e:
                 logger.error(f"Error generating AI suggestions: {str(e)}")
                 suggestions_data = None
         else:
-            logger.info("No Anthropic API key found - providing analysis guidelines")
+            logger.info("No Anthropic API key found - falling back to manual analysis")
 
-        # Format the response
         response_text = f"# SEO Title Analysis Results\n\n"
         response_text += f"**Query analyzed:** {query}\n"
         response_text += f"**Current title:** {user_title}\n"
-        response_text += f"**Your domain:** {user_domain if user_domain else 'Not specified'}\n"
-        
-        if user_domain and user_ranking:
+        response_text += f"**Your domain:** {user_domain or 'Not specified'}\n"
+        response_text += f"**Search location:** {location_code} ({language_code})\n"
+        response_text += f"**Device type:** {device}\n"
+
+        if user_domain and user_ranking is not None:
             response_text += f"**Your current ranking:** Position #{user_ranking}\n"
             response_text += f"**Your current SERP title:** {user_result.get('title', 'N/A')}\n"
         elif user_domain:
             response_text += f"**Your current ranking:** Not found in top {len(organic_results)} results\n"
-        
+
         response_text += f"**Competitor titles found:** {len(competitor_titles)}\n"
         response_text += f"**Total organic results:** {len(organic_results)}\n"
         response_text += f"**People Also Ask questions:** {len(paa_questions)}\n"
         response_text += f"**Showing detailed analysis for:** Top {min(max_results, len(competitor_results))} competitor results\n"
         response_text += f"**AI Suggestions:** {'Enabled' if use_ai_suggestions else 'Disabled (no API key)'}\n\n"
-        
-        # Include AI suggestions or guidelines
+
         if use_ai_suggestions and suggestions_data:
             response_text += "## AI-Generated SEO Title Suggestions:\n\n"
-            suggestions = suggestions_data.get("suggestions", [])
-            if suggestions:
-                for i, suggestion in enumerate(suggestions, 1):
-                    response_text += f"### Suggestion {i}\n"
-                    response_text += f"**Title:** {suggestion.get('title', 'N/A')}\n"
-                    response_text += f"**Meta Description:** {suggestion.get('description', 'N/A')}\n"
-                    response_text += f"**Rationale:** {suggestion.get('rationale', 'N/A')}\n\n"
-            else:
-                response_text += "No AI suggestions were generated.\n\n"
+            for i, suggestion in enumerate(suggestions_data.get("suggestions", []), 1):
+                response_text += f"### Suggestion {i}\n"
+                response_text += f"**Title:** {suggestion.get('title', 'N/A')}\n"
+                response_text += f"**Meta Description:** {suggestion.get('description', 'N/A')}\n"
+                response_text += f"**Rationale:** {suggestion.get('rationale', 'N/A')}\n\n"
         else:
-            # Provide expert guidelines for Claude Desktop to use
             response_text += generate_seo_guidelines(query, user_title, competitor_titles, competitor_results, paa_questions, user_ranking)
-        
-        # Include People Also Ask section
+
         if paa_questions:
             response_text += "## People Also Ask Questions:\n\n"
             for i, question in enumerate(paa_questions, 1):
                 response_text += f"{i}. {question}\n"
             response_text += "\n"
-        
-        # Include detailed competitor analysis
+
         results_to_show = competitor_results[:max_results]
         response_text += f"## Detailed Competitor Analysis (Top {len(results_to_show)} competitors):\n\n"
         for i, result in enumerate(results_to_show, 1):
@@ -213,68 +216,27 @@ async def analyze_title_tool(arguments: dict) -> List[types.TextContent]:
             response_text += f"**Domain:** {result.get('url', '').split('/')[2] if result.get('url') else 'N/A'}\n"
             response_text += f"**Description:** {result.get('description', 'N/A')}\n\n"
 
-        # Enhanced analysis using all competitor titles for patterns
         enhanced_analysis = generate_enhanced_analysis(organic_results, competitor_titles, query, serp)
         response_text += "\n## Enhanced SERP Analysis\n"
         response_text += enhanced_analysis
-        
-        # Additional SERP data
+
         response_text += "\n## Additional SERP Data for Analysis\n"
         response_text += f"**Total SERP results:** {serp.get('se_results_count', 'N/A')}\n"
         response_text += f"**Search performed:** {serp.get('datetime', 'N/A')}\n"
         response_text += f"**Location:** {serp.get('location_code', 'N/A')}\n"
         response_text += f"**Device:** {serp.get('device', 'N/A')}\n"
-        
-        # SERP features
-        items = serp.get('items', [])
-        serp_features = set()
-        for item in items:
-            if item.get('type') and item.get('type') != 'organic':
-                serp_features.add(item.get('type'))
-        
-        if serp_features:
-            response_text += f"**SERP Features present:** {', '.join(sorted(serp_features))}\n"
-        
-        # Domain analysis (excluding user's domain)
-        competitor_domains = [result.get('url', '').split('/')[2] for result in competitor_results if result.get('url')]
-        unique_competitor_domains = list(set(competitor_domains))
-        response_text += f"**Unique competitor domains:** {len(unique_competitor_domains)}\n"
-        
-        # TLD analysis
-        competitor_tlds = [domain.split('.')[-1] for domain in competitor_domains if domain and '.' in domain]
-        tld_counts = {}
-        for tld in competitor_tlds:
-            tld_counts[tld] = tld_counts.get(tld, 0) + 1
-        
-        if tld_counts:
-            response_text += f"**Competitor TLD distribution:** {dict(sorted(tld_counts.items(), key=lambda x: x[1], reverse=True))}\n"
-        
+
+        logger.info("Returning structured analysis response to client")
         return [types.TextContent(type="text", text=response_text)]
-        
+
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
-        error_text = f"❌ **Invalid Request**\n\n{str(e)}\n\n"
-        error_text += "**Required Parameters:**\n"
-        error_text += "- `query`: Target keyword to analyze\n"
-        error_text += "- `user_title`: Your current page title\n\n"
-        error_text += "**Optional Parameters:**\n"
-        error_text += "- `user_domain`: Your domain (e.g., 'example.com')\n"
-        error_text += "- `max_results`: Number of results to analyze (10-100)"
-        return [types.TextContent(type="text", text=error_text)]
-        
+        return [types.TextContent(type="text", text=f"❌ Invalid input:\n\n{str(e)}")]
     except Exception as e:
         import traceback
-        logger.error(f"Error in analyze_title_tool: {str(e)}")
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        
-        error_text = f"❌ **Analysis Error**\n\n"
-        error_text += f"An error occurred: {str(e)}\n\n"
-        error_text += "**Common Solutions:**\n"
-        error_text += "- Check your DataForSEO API credentials\n"
-        error_text += "- Verify your internet connection\n"
-        error_text += "- Try with a different keyword"
-        
-        return [types.TextContent(type="text", text=error_text)]
+        logger.error(f"Unhandled error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return [types.TextContent(type="text", text=f"❌ Unexpected error:\n\n{str(e)}")]
 
 def generate_seo_guidelines(query: str, user_title: str, competitor_titles: List[str], competitor_results: List[Dict], paa_questions: List[str], user_ranking: Optional[int] = None) -> str:
     """Generate SEO guidelines and analysis based on SERP data"""

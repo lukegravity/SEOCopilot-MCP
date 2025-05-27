@@ -2,63 +2,56 @@ import os
 import json
 import requests
 from typing import List, Dict
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+import os
+import json
+import requests
+from typing import List, Dict
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 def suggest_better_titles(query: str, user_title: str, competitor_titles: List[str]) -> Dict:
+    """Generate SEO title suggestions using Claude (Anthropic) API"""
+
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set.")
+    if not api_key or not api_key.strip():
+        logger.error("ANTHROPIC_API_KEY environment variable not set or empty")
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable not set or empty")
 
     top_titles = competitor_titles[:10]
-
-    # Use triple quotes and avoid f-string formatting issues
-    prompt = """You are an expert SEO assistant.
-
-Your task is to generate a set of compelling and optimized meta titles and meta descriptions for the query: "{query}".
-
-The page currently uses this title:
-"{user_title}"
-
-Here are the top titles currently ranking in Google for this query:
-{competitor_titles}
-
-Use the SERP data above to guide your suggestions — match the tone, length, and structure where needed, but aim to **outperform these** by being more relevant, clickable, and unique.
-
-Follow these principles:
-- Prioritize **CTR (click-through rate)** above all — drive user intent
-- Titles should be between **50–65 characters**, unless the SERP data suggests that titles are generally shorter than this; be sure to include the rationale in your response.
-- Descriptions must be between **120–160 characters**
-- If the SERP includes **emojis**, include tasteful, relevant emoji suggestions too
-- Emojis should always be at the **start** or the **end** of the title
-- Consider **average SERP title length** and adjust suggestions to match Google's presentation - this can override the 50 character minimum as required
-- Look for angles that the current titles may be missing: CTAs, emotional appeal, specificity, or uniqueness
-
-Return exactly 5 suggestions, each with:
-- A meta title
-- A meta description
-- A short explanation (1–2 lines) of what the suggestion aims to achieve
-
-Format your response as a structured JSON with the following format:
-```json
-{{
-  "suggestions": [
-    {{
-      "title": "Suggested title 1",
-      "description": "Suggested description 1",
-      "rationale": "Rationale for suggestion 1"
-    }},
-    {{
-      "title": "Suggested title 2",
-      "description": "Suggested description 2",
-      "rationale": "Rationale for suggestion 2"
-    }}
-  ]
-}}
-```
-
-Only return the JSON, no other text.""".format(
-        query=query,
-        user_title=user_title,
-        competitor_titles='\n'.join(f"- {t}" for t in top_titles)
+    prompt = (
+        "You are an expert SEO assistant.\n\n"
+        f"Your task is to suggest 5 **click-optimized** meta titles and descriptions for the query: \"{query}\".\n"
+        f"The current page title is:\n\"{user_title}\"\n\n"
+        "Here are current top SERP titles:\n"
+        + '\n'.join(f"- {t}" for t in top_titles) + "\n\n"
+        "🧠 Use this data to guide your suggestions — aim to outperform these titles with better structure, CTR appeal, and relevance.\n\n"
+        "🎯 Follow these rules strictly:\n"
+        "- Return **exactly 5** suggestions\n"
+        "- Titles: 50–65 characters\n"
+        "- Descriptions: 120–160 characters\n"
+        "- Emojis only if SERP uses them (at start or end)\n"
+        "- Each suggestion must include: title, description, rationale\n\n"
+        "📦 Format your response **exactly** like this:\n"
+        "```json\n"
+        "{\n"
+        "  \"suggestions\": [\n"
+        "    {\n"
+        "      \"title\": \"Example title\",\n"
+        "      \"description\": \"Example description\",\n"
+        "      \"rationale\": \"Reason this works\"\n"
+        "    },\n"
+        "    ... (5 total)\n"
+        "  ]\n"
+        "}\n"
+        "```\n"
+        "Return **only this JSON block**, no commentary or text outside it."
     )
 
     headers = {
@@ -68,55 +61,67 @@ Only return the JSON, no other text.""".format(
     }
 
     data = {
-        "model": "claude-3-haiku-20240307",  # Cheaper model - was claude-3-opus-20240229
+        "model": "claude-3-haiku-20240307",
         "max_tokens": 2000,
         "temperature": 0.7,
+        "system": "You are an expert SEO assistant that provides helpful, accurate, and well-structured title and description suggestions.",
         "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "system": "You are an expert SEO assistant that provides helpful, accurate, and well-structured title and description suggestions."
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
     }
 
     try:
+        logger.info("Sending request to Claude API...")
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers=headers,
-            json=data
+            json=data,
+            timeout=30
         )
         response.raise_for_status()
         result = response.json()
-        
-        # Extract content from Claude's response
+
         content = result.get("content", [{}])[0].get("text", "")
-        
-        # Parse JSON from the response
-        try:
-            # Try to parse the entire response as JSON
-            parsed_content = json.loads(content)
-        except json.JSONDecodeError:
-            # If that fails, try to extract JSON from markdown code blocks
-            import re
-            json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
-            if json_match:
-                try:
-                    parsed_content = json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    # If JSON parsing fails, return a default structure
-                    parsed_content = {"suggestions": []}
-            else:
-                # If no JSON block found, return default structure
-                parsed_content = {"suggestions": []}
-        
-        # Ensure we have the expected structure
-        if "suggestions" not in parsed_content:
-            parsed_content = {"suggestions": []}
-            
+        logger.info("Parsing Claude response...")
+
+        parsed = None
+
+        # Try extracting JSON from ```json ... ``` block
+        match = re.search(r'```json\s*({.*?})\s*```', content, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(1))
+                logger.info("Parsed Claude response from JSON code block")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from code block: {e}")
+        else:
+            # Try parsing full content as raw JSON
+            try:
+                parsed = json.loads(content)
+                logger.info("Parsed Claude response as direct JSON")
+            except json.JSONDecodeError as e:
+                logger.error("Claude response was not valid JSON")
+                logger.debug(f"Raw content: {content[:300]}...")
+                parsed = {"suggestions": []}
+
+        if not parsed or "suggestions" not in parsed:
+            logger.warning("Claude response missing 'suggestions' key")
+            parsed = {"suggestions": []}
+
+        if len(parsed["suggestions"]) != 5:
+            logger.warning(f"Claude returned {len(parsed['suggestions'])} suggestions instead of 5")
+
         return {
             "query": query,
             "user_title": user_title,
-            "similarity_score": None,
             "top_serp_titles": top_titles,
-            "suggestions": parsed_content["suggestions"]
+            "suggestions": parsed["suggestions"]
         }
-    except Exception as e:
-        raise RuntimeError(f"Error calling Claude API: {str(e)}")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error: {e}")
+        raise RuntimeError(f"Claude API error: {str(e)}")
+
