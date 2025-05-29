@@ -20,7 +20,7 @@ SEO Copilot is an MCP (Model Context Protocol) server that provides SEO analysis
 
 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/seo-copilot-mcp.git
+git clone https://github.com/lukegravity/SEOCopilot-MCP/seo-copilot-mcp.git
 cd seo-copilot-mcp
 ```
 
